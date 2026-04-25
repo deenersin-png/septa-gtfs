@@ -1,0 +1,10 @@
+{
+  "name": "septa-gtfs-builder",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "build:cached": "node build.js --skip-download"
+  }
+}
