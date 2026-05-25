@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-05-18T10:40:25.844Z",
+  "generated_at": "2026-05-25T10:47:25.049Z",
   "gtfs_version": "v202605101",
   "feed_start": "20260510",
-  "feed_end": "20260606",
+  "feed_end": "20260523",
   "routes": [
     "1",
     "103",
@@ -156,9 +156,7 @@
     "B3",
     "BLVDDIR",
     "D1",
-    "D1 Bus",
     "D2",
-    "D2 Bus",
     "G1",
     "K",
     "L1",
@@ -166,11 +164,11 @@
     "LUCYGO",
     "LUCYGR",
     "M1",
+    "MANNLP",
     "T1",
     "T2",
     "T3",
     "T4",
-    "T5",
-    "T5 Bus"
+    "T5"
   ]
 }
