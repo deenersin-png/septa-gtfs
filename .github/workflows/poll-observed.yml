@@ -1,0 +1,40 @@
+name: Poll observed schedule
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: poll-observed
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Poll live feed and update observed schedule
+        run: node poll-observed.js
+
+      - name: Commit and push if data changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data-observed/
+          if git diff --staged --quiet; then
+            echo "No observed-schedule changes."
+          else
+            git commit -m "data: observed-schedule update $(date -u +%Y-%m-%dT%H:%M)"
+            git pull --rebase origin main
+            git push
+          fi
