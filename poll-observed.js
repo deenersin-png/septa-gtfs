@@ -135,16 +135,26 @@ async function pollOnce(state) {
         liveKeys.add(key);
 
         const existing = state.blocks[key];
+        const liveFields = {
+          vehicleId:   String(bus.VehicleID || bus.label || ''),
+          direction:   bus.Direction || '',
+          sequence:    parseInt(bus.next_stop_sequence) || 0,
+          destination: bus.destination || '',
+        };
         if (!existing || !existing.isLive) {
           // newly appeared → pull-out event
           const tripId = String(bus.trip || '');
           const found = tripId ? findTrip(routeId, tripId) : null;
           if (found) pushSample(routeId, blockId, found.dayType, tripId, 'start', min);
-          state.blocks[key] = { routeId, blockId, isLive: true, tripId, lastSeenMin: min, missingSince: null };
+          state.blocks[key] = {
+            routeId, blockId, isLive: true, tripId,
+            lastSeenMin: min, lastSeenAtMs: Date.now(), missingSince: null, endedAtMs: null,
+            ...liveFields,
+          };
         } else {
-          existing.isLive = true;
-          existing.lastSeenMin = min;
-          existing.missingSince = null;
+          Object.assign(existing, liveFields, {
+            isLive: true, lastSeenMin: min, lastSeenAtMs: Date.now(), missingSince: null, endedAtMs: null,
+          });
         }
       }
     }
@@ -156,12 +166,15 @@ async function pollOnce(state) {
     if (liveKeys.has(key) || !b.isLive) continue;
     if (b.missingSince == null) { b.missingSince = nowMs; continue; }
     if (nowMs - b.missingSince < MISSING_DEBOUNCE_MS) continue;
-    // confirmed ended — record against the trip that was actually running
+    // confirmed ended — record against the trip that was actually running,
+    // using the last real sighting (not this detection moment) as the
+    // arrival/recovery-start time, same principle as the minute-based sample
     if (b.tripId) {
       const found = findTrip(b.routeId, b.tripId);
       if (found) pushSample(b.routeId, b.blockId, found.dayType, b.tripId, 'end', b.lastSeenMin);
     }
     b.isLive = false;
+    b.endedAtMs = b.lastSeenAtMs || nowMs;
     b.missingSince = null;
   }
 }
