@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-06-29T11:22:38.754Z",
-  "gtfs_version": "v202606141",
-  "feed_start": "20260614",
-  "feed_end": "20260627",
+  "generated_at": "2026-07-04T10:26:24.368Z",
+  "gtfs_version": "v202606282",
+  "feed_start": "20260628",
+  "feed_end": "20260801",
   "routes": [
     "1",
     "103",
@@ -143,6 +143,7 @@
     "T2",
     "T3",
     "T4",
-    "T5"
+    "T5",
+    "WTR Bus"
   ]
 }
