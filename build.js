@@ -97,6 +97,78 @@ function buildServiceMap() {
   return map;
 }
 
+// ── 3b. Calendar overrides (holidays) ──────────────────────────
+// Trips are already bucketed correctly (a July-4 trip runs on a Sunday
+// service_id, so it lands in the "sunday" array). The only thing the client
+// can't know is that *today* should read the sunday bucket instead of the
+// weekday one. SEPTA encodes this in calendar_dates.txt: on a holiday it
+// REMOVES the normal weekday/Saturday service_ids (exception_type 2) and
+// ADDS the replacement ones (exception_type 1). We compute, for each such
+// special date, the effective day-type and emit only the dates that differ
+// from their plain day-of-week — a sparse map the client consults first.
+function buildCalendarOverrides() {
+  const cal = readCSV(join(BUS, 'calendar.txt'));
+  const exc = readCSV(join(BUS, 'calendar_dates.txt'));
+
+  // Classify each service_id to a single day-type from its weekly pattern.
+  // Date-specific supplemental services (all-zero weekly flags) can't be
+  // classified and are skipped from the vote.
+  const bucketOf  = new Map(); // service_id → 'weekday'|'saturday'|'sunday'
+  const dowActive = new Map(); // service_id → [sun,mon,…,sat] booleans (JS getUTCDay order)
+  for (const r of cal) {
+    const wk = ['monday','tuesday','wednesday','thursday','friday'].some(d => r[d] === '1');
+    const sa = r.saturday === '1', su = r.sunday === '1';
+    let bucket = null;
+    if (wk && !sa && !su) bucket = 'weekday';
+    else if (!wk && sa && !su) bucket = 'saturday';
+    else if (!wk && !sa && su) bucket = 'sunday';
+    else if (wk) bucket = 'weekday';
+    if (bucket) bucketOf.set(r.service_id, bucket);
+    dowActive.set(r.service_id, {
+      flags: [r.sunday==='1', r.monday==='1', r.tuesday==='1', r.wednesday==='1', r.thursday==='1', r.friday==='1', r.saturday==='1'],
+      start: r.start_date, end: r.end_date,
+    });
+  }
+
+  const addByDate = new Map(), remByDate = new Map();
+  for (const r of exc) {
+    const m = r.exception_type === '1' ? addByDate : r.exception_type === '2' ? remByDate : null;
+    if (!m) continue;
+    if (!m.has(r.date)) m.set(r.date, new Set());
+    m.get(r.date).add(r.service_id);
+  }
+
+  const plainBucket = dow => dow === 0 ? 'sunday' : dow === 6 ? 'saturday' : 'weekday';
+  const overrides = {};
+  const specialDates = new Set([...addByDate.keys(), ...remByDate.keys()]);
+
+  for (const ymd of specialDates) {
+    if (!/^\d{8}$/.test(ymd)) continue;
+    const dow = new Date(`${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}T00:00:00Z`).getUTCDay();
+    const plain = plainBucket(dow);
+
+    // Effective active services on that date = weekly-base (in range, runs
+    // that DOW) minus removals plus additions.
+    const active = new Set();
+    for (const [sid, info] of dowActive) {
+      if (ymd < info.start || ymd > info.end) continue;
+      if (info.flags[dow]) active.add(sid);
+    }
+    (remByDate.get(ymd) || []).forEach(s => active.delete(s));
+    (addByDate.get(ymd) || []).forEach(s => active.add(s));
+
+    const votes = { weekday:0, saturday:0, sunday:0 };
+    for (const s of active) { const b = bucketOf.get(s); if (b) votes[b]++; }
+    let eff = null, best = 0;
+    for (const b of ['weekday','saturday','sunday']) if (votes[b] > best) { best = votes[b]; eff = b; }
+
+    if (eff && eff !== plain) {
+      overrides[`${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}`] = eff;
+    }
+  }
+  return overrides;
+}
+
 // ── 4. Routes ──────────────────────────────────────────────────
 function buildRouteMap() {
   const rows = readCSV(join(BUS, 'routes.txt'));
@@ -245,6 +317,12 @@ async function main() {
 
   log('emitting JSON');
   emit(trips, stops);
+
+  log('computing calendar overrides (holidays)');
+  const overrides = buildCalendarOverrides();
+  writeFileSync(join(OUT, 'calendar-overrides.json'), JSON.stringify(overrides));
+  log(`calendar overrides: ${Object.keys(overrides).length} special dates`);
+
   log('done');
 }
 
