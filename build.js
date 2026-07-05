@@ -177,6 +177,24 @@ function buildRouteMap() {
   return byId;
 }
 
+// ── 4b. Direction names (directions.txt) ───────────────────────
+// route_short_name → { "0": "Eastbound", "1": "Westbound" }. Lets the client
+// label a scheduled block's direction from GTFS directly, instead of having
+// to learn it from a live bus (which fails when no bus is out that way yet —
+// the source of the mystery "DI" pages).
+function buildDirectionNames(routes) {
+  const rows = readCSV(join(BUS, 'directions.txt'));
+  const byRoute = new Map();
+  for (const r of rows) {
+    const route = routes.get(r.route_id);
+    if (!route) continue;
+    const name = route.route_short_name;
+    if (!byRoute.has(name)) byRoute.set(name, {});
+    byRoute.get(name)[r.direction_id] = r.direction;
+  }
+  return byRoute;
+}
+
 // ── 5. Stops ───────────────────────────────────────────────────
 function buildStopMap() {
   const rows = readCSV(join(BUS, 'stops.txt'));
@@ -234,7 +252,7 @@ async function annotateTripsWithTimes(trips) {
 }
 
 // ── 8. Emit per-route JSON + blocks.json + manifest ────────────
-function emit(trips, stops) {
+function emit(trips, stops, dirNames) {
   if (existsSync(OUT)) rmSync(OUT, { recursive: true });
   mkdirSync(OUT, { recursive: true });
 
@@ -267,6 +285,7 @@ function emit(trips, stops) {
     }
     writeFileSync(join(OUT, `${name}.json`), JSON.stringify({
       route_short_name: name,
+      directions: (dirNames && dirNames.get(name)) || {},
       ...days,
     }));
   }
@@ -306,6 +325,7 @@ async function main() {
   const routes   = buildRouteMap();
   const stops    = buildStopMap();
   const services = buildServiceMap();
+  const dirNames = buildDirectionNames(routes);
   log(`routes=${routes.size} stops=${stops.size} services=${services.size}`);
 
   log('parsing trips');
@@ -316,7 +336,7 @@ async function main() {
   await annotateTripsWithTimes(trips);
 
   log('emitting JSON');
-  emit(trips, stops);
+  emit(trips, stops, dirNames);
 
   log('computing calendar overrides (holidays)');
   const overrides = buildCalendarOverrides();
