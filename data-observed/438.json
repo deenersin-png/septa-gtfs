@@ -1,1 +1,1 @@
-{"5174":{"weekday":{"973750":{"startSamples":[928,928,935],"endSamples":[929,950,942],"avgStart":"15:30","samples":3,"avgEnd":"15:40"}}},"5553":{"weekday":{"973749":{"startSamples":[463,463,464],"endSamples":[465,465,465],"avgStart":"07:43","avgEnd":"07:45","samples":3}}}}
+{"5174":{"weekday":{"973750":{"startSamples":[928,928,935,930],"endSamples":[929,950,942],"avgStart":"15:30","samples":4,"avgEnd":"15:40"}}},"5553":{"weekday":{"973749":{"startSamples":[463,463,464],"endSamples":[465,465,465],"avgStart":"07:43","avgEnd":"07:45","samples":3}}}}
