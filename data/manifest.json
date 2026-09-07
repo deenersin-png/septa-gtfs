@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-08-31T13:45:24.674Z",
-  "gtfs_version": "v202608233",
-  "feed_start": "20260823",
+  "generated_at": "2026-09-07T12:29:01.050Z",
+  "gtfs_version": "v202609060",
+  "feed_start": "20260906",
   "feed_end": "20270220",
   "routes": [
     "1",
@@ -161,7 +161,6 @@
     "M1",
     "M1 Bus",
     "MANN",
-    "NOR Bus",
     "T1",
     "T2",
     "T3",
