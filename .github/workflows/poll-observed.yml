@@ -1,21 +1,30 @@
 name: Poll observed schedule
 
+# One long-running job instead of many 10-minute ones: GitHub drops most
+# scheduled runs (we were getting only 3-5 per day), so each job now keeps
+# polling for ~5h45m, committing data-observed/ after every ~9.5-min
+# poll-observed.js pass. Near the end it queues its own successor with
+# workflow_dispatch (allowed with GITHUB_TOKEN), so coverage is continuous.
+# The hourly cron is only a backup in case that chain ever breaks.
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '7 * * * *'
   workflow_dispatch: {}
 
+# One job polls at a time; a new trigger waits as "pending" until the running
+# job ends (GitHub keeps at most one pending run per group).
 concurrency:
   group: poll-observed
   cancel-in-progress: false
 
 permissions:
   contents: write
+  actions: write   # to dispatch the next run of this workflow
 
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
 
@@ -23,18 +32,61 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Poll live feed and update observed schedule
-        run: node poll-observed.js
-
-      - name: Commit and push if data changed
+      - name: Poll live feed and commit observed schedule (loop)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data-observed/
-          if git diff --staged --quiet; then
-            echo "No observed-schedule changes."
-          else
-            git commit -m "data: observed-schedule update $(date -u +%Y-%m-%dT%H:%M)"
-            git pull --rebase origin main
-            git push
-          fi
+
+          # Start a new ~9.5-min pass only while under 335 min elapsed, so the
+          # last pass plus git work ends well inside the 355-min timeout.
+          start=$(date +%s)
+          stop_at=$((start + 335*60))
+          dispatched=0
+          pass=0
+
+          while [ "$(date +%s)" -lt "$stop_at" ]; do
+            pass=$((pass + 1))
+            echo "::group::Pass $pass ($(date -u +%H:%M) UTC)"
+
+            # Reloads state.json / GTFS data from the last pull each time.
+            node poll-observed.js || echo "poll-observed.js failed (pass $pass); continuing"
+
+            git add data-observed/
+            if git diff --staged --quiet; then
+              echo "No observed-schedule changes."
+            else
+              git commit -q -m "data: observed-schedule update $(date -u +%Y-%m-%dT%H:%M)"
+            fi
+
+            # build.yml also pushes to main (data/ only), so rebase before push.
+            # Retry a few times; if it still fails, the commit stays local and
+            # goes out with the next pass.
+            for try in 1 2 3; do
+              if git pull -q --rebase origin main && git push -q origin HEAD:main; then
+                break
+              fi
+              git rebase --abort 2>/dev/null || true
+              echo "push attempt $try failed; retrying"
+              sleep $((try * 10))
+            done
+            echo "::endgroup::"
+
+            # Within ~15 min of the end, queue the next run. It stays pending
+            # (concurrency group) and starts as soon as this job finishes.
+            if [ "$dispatched" = 0 ] && [ "$(date +%s)" -ge $((stop_at - 15*60)) ] \
+               && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+              if curl -fsS -X POST \
+                   -H "Authorization: Bearer $GH_TOKEN" \
+                   -H "Accept: application/vnd.github+json" \
+                   "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/poll-observed.yml/dispatches" \
+                   -d '{"ref":"main"}'; then
+                echo "Queued next poll-observed run."
+                dispatched=1
+              else
+                echo "Could not dispatch next run; hourly cron will pick up."
+              fi
+            fi
+          done
+          echo "Done after $pass passes."

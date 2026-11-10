@@ -6,7 +6,8 @@
 // data-observed/ — cross-checked against, not a replacement for, the GTFS
 // schedule in data/.
 //
-// Runs every ~10 min via .github/workflows/poll-observed.yml. Each run does
+// Run back-to-back (~every 10 min) by .github/workflows/poll-observed.yml,
+// which loops this script inside one long job. Each run does
 // its own internal poll loop so a single cron trigger still gives
 // near-continuous coverage without generating hundreds of commits/day.
 
