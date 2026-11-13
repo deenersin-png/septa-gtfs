@@ -169,6 +169,85 @@ function buildCalendarOverrides() {
   return overrides;
 }
 
+// ── 3c. Calendar days (which services run on each date) ────────
+// The day-type buckets in the route files mix schedules: SEPTA's alternate
+// timetables (service 11 "holiday week" weekday, 471 alternate Saturday,
+// 17 = L1/B1 on Thanksgiving / New Year's Day) are dated services with no
+// weekly pattern, and they land in the weekday/saturday bucket of every date
+// they run on - so a plain weekday's list carries them too. Each trip now
+// carries its service id (`sv`), and this file says, for every date of the
+// feed, which services run that day. A client keeps the trips whose `sv` is
+// in the date's list and gets exactly that day's timetable.
+//
+//   { "2026-11-27": { day: "weekday", services: ["11","16",...],
+//                     special: true, alt: true, altRoutes: ["1","12",...] } }
+//
+// special = SEPTA changed this date's service (removed a weekly service);
+// alt = a dated alternate timetable runs (paddles exist only for the regular
+// Weekday / Saturday / Sunday), altRoutes = the routes it covers.
+const ALT_MIN_TRIPS = 100; // smaller dated services are one-off extra trips
+function buildCalendarDays(trips) {
+  const cal = readCSV(join(BUS, 'calendar.txt'));
+  const exc = readCSV(join(BUS, 'calendar_dates.txt'));
+  const weekly = new Map(), dated = new Set();
+  for (const r of cal) {
+    const flags = [r.sunday, r.monday, r.tuesday, r.wednesday, r.thursday, r.friday, r.saturday].map(x => x === '1');
+    if (flags.some(Boolean)) weekly.set(r.service_id, { flags, start: r.start_date, end: r.end_date });
+    else dated.add(r.service_id);
+  }
+  const tripCount = new Map(), routesOf = new Map();
+  for (const t of trips.values()) {
+    tripCount.set(t.service_id, (tripCount.get(t.service_id) || 0) + 1);
+    if (!routesOf.has(t.service_id)) routesOf.set(t.service_id, new Set());
+    routesOf.get(t.service_id).add(t.route_name);
+  }
+  const add = new Map(), rem = new Map();
+  for (const r of exc) {
+    const m = r.exception_type === '1' ? add : r.exception_type === '2' ? rem : null;
+    if (!m || !/^\d{8}$/.test(r.date)) continue;
+    if (!m.has(r.date)) m.set(r.date, new Set());
+    m.get(r.date).add(r.service_id);
+  }
+  const feed = readCSV(join(BUS, 'feed_info.txt'))[0] || {};
+  let first = feed.feed_start_date, last = feed.feed_end_date;
+  const allDates = [...add.keys(), ...rem.keys()].sort();
+  if (!/^\d{8}$/.test(first || '')) first = allDates[0];
+  if (!/^\d{8}$/.test(last || '')) last = allDates[allDates.length - 1];
+  if (!first || !last) return {};
+
+  const bucketOfDow = dow => dow === 0 ? 'sunday' : dow === 6 ? 'saturday' : 'weekday';
+  const out = {};
+  const d = new Date(`${first.slice(0,4)}-${first.slice(4,6)}-${first.slice(6,8)}T00:00:00Z`);
+  for (let guard = 0; guard < 800; guard++, d.setUTCDate(d.getUTCDate() + 1)) {
+    const iso = d.toISOString().slice(0, 10), ymd = iso.replace(/-/g, '');
+    if (ymd > last) break;
+    const dow = d.getUTCDay();
+    const active = new Set();
+    for (const [sid, w] of weekly) if (ymd >= w.start && ymd <= w.end && w.flags[dow]) active.add(sid);
+    (rem.get(ymd) || []).forEach(s => active.delete(s));
+    (add.get(ymd) || []).forEach(s => active.add(s));
+    // The day's type: the regular weekly services that still run vote.
+    const votes = { weekday: 0, saturday: 0, sunday: 0 };
+    for (const s of active) {
+      const w = weekly.get(s); if (!w) continue;
+      const f = w.flags;
+      const b = f.slice(1, 6).some(Boolean) ? 'weekday' : f[6] ? 'saturday' : f[0] ? 'sunday' : null;
+      if (b) votes[b] += tripCount.get(s) || 0;
+    }
+    let day = bucketOfDow(dow), best = 0;
+    for (const b of ['weekday', 'saturday', 'sunday']) if (votes[b] > best) { best = votes[b]; day = b; }
+    const entry = { day, services: [...active].sort() };
+    if (rem.has(ymd)) entry.special = true;
+    const alt = [...active].filter(s => dated.has(s) && (tripCount.get(s) || 0) >= ALT_MIN_TRIPS);
+    if (alt.length) {
+      entry.alt = true;
+      entry.altRoutes = [...new Set(alt.flatMap(s => [...(routesOf.get(s) || [])]))].sort();
+    }
+    out[iso] = entry;
+  }
+  return out;
+}
+
 // ── 4. Routes ──────────────────────────────────────────────────
 function buildRouteMap() {
   const rows = readCSV(join(BUS, 'routes.txt'));
@@ -266,6 +345,7 @@ function emit(trips, stops, dirNames) {
       block_id:  t.block_id,
       direction: parseInt(t.direction) || 0,
       headsign:  t.headsign,
+      sv:        t.service_id, // which dates it runs: calendar-days.json
       start:     t.start_time,
       end:       t.end_time,
       first:     stops.get(t.first_stop_id) || '',
@@ -342,6 +422,12 @@ async function main() {
   const overrides = buildCalendarOverrides();
   writeFileSync(join(OUT, 'calendar-overrides.json'), JSON.stringify(overrides));
   log(`calendar overrides: ${Object.keys(overrides).length} special dates`);
+
+  log('computing calendar days (services per date, alternate schedules)');
+  const days = buildCalendarDays(trips);
+  writeFileSync(join(OUT, 'calendar-days.json'), JSON.stringify(days));
+  const alts = Object.entries(days).filter(([, v]) => v.alt || v.special);
+  log(`calendar days: ${Object.keys(days).length} dates, special: ${alts.map(([k, v]) => k + (v.alt ? '*' : '')).join(' ')}`);
 
   log('done');
 }
